@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AEC — AWS Emulator Console</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand">
+        <span class="brand-badge">AEC</span>
+        <span class="brand-title">AWS Emulator Console</span>
+      </div>
+      <div id="health-pill" class="pill pill-muted">Checking emulator…</div>
+    </div>
+    <div class="topbar-right">
+      <label class="top-control">
+        <span>Caller</span>
+        <select id="caller-select">
+          <option value="root">root (emulator)</option>
+          <option value="anonymous">anonymous (unsigned)</option>
+        </select>
+      </label>
+      <label class="top-control">
+        <span>Region</span>
+        <select id="region-select">
+          <option value="us-east-1">us-east-1</option>
+          <option value="us-west-2">us-west-2</option>
+          <option value="eu-west-1">eu-west-1</option>
+          <option value="ap-northeast-1">ap-northeast-1</option>
+          <option value="ap-northeast-2">ap-northeast-2</option>
+        </select>
+      </label>
+      <button id="refresh-btn" class="btn btn-dark" title="Refresh current view">Refresh</button>
+      <button id="inspector-toggle-btn" class="btn btn-accent">
+        API Inspector <span id="inspector-count" class="count-badge">0</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-section">Services</div>
+      <button class="nav-item active" data-view="overview">Overview</button>
+      <button class="nav-item" data-view="s3">S3 <span class="nav-sub">Buckets &amp; Public Access</span></button>
+      <button class="nav-item" data-view="iam">IAM <span class="nav-sub">Users &amp; Policies</span></button>
+      <button class="nav-item" data-view="dynamodb">DynamoDB <span class="nav-sub">Tables &amp; Items</span></button>
+      <button class="nav-item" data-view="ec2">EC2 <span class="nav-sub">Instances</span></button>
+      <div class="sidebar-section">Tools</div>
+      <button class="nav-item" data-view="playground">API Playground <span class="nav-sub">Raw AWS Calls</span></button>
+    </aside>
+
+    <main class="main">
+      <div id="toast" class="toast hidden"></div>
+
+      <!-- OVERVIEW -->
+      <section id="view-overview" class="view active">
+        <div class="page-header">
+          <h1>Overview</h1>
+          <p class="subtitle">Local AWS Emulator status, active caller identity, and quick resource counts.</p>
+        </div>
+        <div class="grid-4" id="overview-stats">
+          <div class="stat-card clickable" data-jump="s3">
+            <div class="stat-label">S3 Buckets</div>
+            <div class="stat-value" id="stat-s3">—</div>
+          </div>
+          <div class="stat-card clickable" data-jump="iam">
+            <div class="stat-label">IAM Users</div>
+            <div class="stat-value" id="stat-iam">—</div>
+          </div>
+          <div class="stat-card clickable" data-jump="dynamodb">
+            <div class="stat-label">DynamoDB Tables</div>
+            <div class="stat-value" id="stat-ddb">—</div>
+          </div>
+          <div class="stat-card clickable" data-jump="ec2">
+            <div class="stat-label">EC2 Instances</div>
+            <div class="stat-value" id="stat-ec2">—</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <h2>Emulator Connection</h2>
+            </div>
+            <div class="card-body" id="overview-health">Loading…</div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Active Caller Identity (STS)</h2>
+            </div>
+            <div class="card-body" id="overview-identity">Loading…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- S3 -->
+      <section id="view-s3" class="view">
+        <div class="page-header">
+          <h1>Amazon S3</h1>
+          <p class="subtitle">Upload objects, manage Block Public Access &amp; bucket policies, and verify unsigned public reads.</p>
+        </div>
+
+        <div class="split-pane">
+          <div class="card">
+            <div class="card-header">
+              <h2>Buckets</h2>
+            </div>
+            <div class="card-body">
+              <form id="s3-create-bucket-form" class="inline-form">
+                <input id="s3-new-bucket" type="text" placeholder="my-test-bucket" required />
+                <button class="btn btn-primary" type="submit">Create</button>
+              </form>
+              <div id="s3-buckets-list" class="list-group"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header row-between">
+              <h2 id="s3-selected-bucket-title">Select a bucket</h2>
+              <div id="s3-bucket-tabs" class="segmented hidden">
+                <button class="seg-btn active" data-s3tab="objects">Objects</button>
+                <button class="seg-btn" data-s3tab="access">Public Access &amp; Policy</button>
+              </div>
+            </div>
+            <div class="card-body" id="s3-bucket-empty">
+              <p class="muted">Choose a bucket on the left or create a new one to upload objects and test public access.</p>
+            </div>
+
+            <div class="card-body hidden" id="s3-tab-objects">
+              <div class="upload-box">
+                <div class="upload-row">
+                  <label class="file-drop" id="s3-drop-zone">
+                    <input type="file" id="s3-file-input" />
+                    <span>Drop a file here or click to upload to this bucket</span>
+                  </label>
+                </div>
+                <details class="quick-text-upload">
+                  <summary>Or upload a quick text/JSON object</summary>
+                  <form id="s3-text-upload-form" class="stack-form">
+                    <div class="form-row">
+                      <input id="s3-obj-key" type="text" placeholder="hello.txt" required />
+                      <input id="s3-obj-ctype" type="text" value="text/plain" placeholder="Content-Type" />
+                    </div>
+                    <textarea id="s3-obj-content" rows="3" placeholder="Object content…">Hello from AEC!</textarea>
+                    <button class="btn btn-primary" type="submit">PutObject</button>
+                  </form>
+                </details>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Key</th>
+                      <th>Size</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="s3-objects-tbody"></tbody>
+                </table>
+              </div>
+
+              <div id="s3-preview-card" class="preview-box hidden">
+                <div class="row-between">
+                  <strong id="s3-preview-title">Object Preview</strong>
+                  <span id="s3-preview-badge" class="pill"></span>
+                </div>
+                <div id="s3-preview-meta" class="meta-line"></div>
+                <pre id="s3-preview-body" class="code-block"></pre>
+              </div>
+            </div>
+
+            <div class="card-body hidden" id="s3-tab-access">
+              <div class="subpanel">
+                <div class="row-between">
+                  <div>
+                    <h3>Block Public Access</h3>
+                    <div id="s3-pab-status" class="muted">Loading…</div>
+                  </div>
+                  <div class="btn-group">
+                    <button id="s3-pab-disable-btn" class="btn btn-danger-outline">Disable Block Public Access</button>
+                    <button id="s3-pab-enable-btn" class="btn btn-secondary">Block All Public Access</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="subpanel">
+                <div class="row-between">
+                  <h3>Bucket Policy</h3>
+                  <div class="btn-group">
+                    <button id="s3-policy-preset-btn" class="btn btn-secondary">Insert Public Read Preset</button>
+                    <button id="s3-policy-save-btn" class="btn btn-primary">Save Policy</button>
+                    <button id="s3-policy-delete-btn" class="btn btn-danger-outline">Delete Policy</button>
+                  </div>
+                </div>
+                <textarea id="s3-policy-editor" rows="12" class="code-input" placeholder='{"Version": "2012-10-17", "Statement": [...]}'></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- IAM -->
+      <section id="view-iam" class="view">
+        <div class="page-header">
+          <h1>IAM</h1>
+          <p class="subtitle">Create users, mint session keys, attach inline policies, and switch Active Caller to verify permissions.</p>
+        </div>
+
+        <div class="split-pane">
+          <div class="card">
+            <div class="card-header"><h2>Users</h2></div>
+            <div class="card-body">
+              <form id="iam-create-user-form" class="inline-form">
+                <input id="iam-new-user" type="text" placeholder="readonly-tester" required />
+                <button class="btn btn-primary" type="submit">Create</button>
+              </form>
+              <div id="iam-users-list" class="list-group"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header row-between">
+              <h2 id="iam-selected-user-title">Select an IAM user</h2>
+              <button id="iam-act-as-btn" class="btn btn-accent hidden">Act as this user</button>
+            </div>
+            <div class="card-body" id="iam-user-empty">
+              <p class="muted">Select or create a user on the left to manage access keys and inline policies.</p>
+            </div>
+            <div class="card-body hidden" id="iam-user-detail">
+              <div class="subpanel">
+                <div class="row-between">
+                  <div>
+                    <h3>Access Keys</h3>
+                    <div class="muted small">Created secrets stay in local AEC server memory so you can switch the top-bar Caller safely.</div>
+                  </div>
+                  <button id="iam-create-key-btn" class="btn btn-primary">Create Access Key</button>
+                </div>
+                <div id="iam-keys-list" class="stack-list"></div>
+              </div>
+
+              <div class="subpanel">
+                <h3>Inline Policies</h3>
+                <div id="iam-policies-list" class="stack-list"></div>
+
+                <form id="iam-policy-form" class="stack-form">
+                  <div class="form-row">
+                    <input id="iam-policy-name" type="text" placeholder="PolicyName (e.g. S3ReadOnly)" required />
+                    <select id="iam-policy-preset">
+                      <option value="">Insert preset…</option>
+                      <option value="s3-read">S3 Read-Only (*)</option>
+                      <option value="s3-full">S3 Full Access (*)</option>
+                      <option value="ddb-read">DynamoDB Read-Only (*)</option>
+                      <option value="deny-s3">Explicit Deny S3 (*)</option>
+                    </select>
+                  </div>
+                  <textarea id="iam-policy-doc" rows="9" class="code-input" required></textarea>
+                  <button class="btn btn-primary" type="submit">PutUserPolicy</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DYNAMODB -->
+      <section id="view-dynamodb" class="view">
+        <div class="page-header">
+          <h1>DynamoDB</h1>
+          <p class="subtitle">Create tables, scan items, and put/delete DynamoDB JSON items.</p>
+        </div>
+        <div class="split-pane">
+          <div class="card">
+            <div class="card-header"><h2>Tables</h2></div>
+            <div class="card-body">
+              <form id="ddb-create-table-form" class="stack-form">
+                <input id="ddb-table-name" type="text" placeholder="Table name (e.g. Users)" required />
+                <div class="form-row">
+                  <input id="ddb-pk-name" type="text" value="id" placeholder="Partition key" required />
+                  <select id="ddb-pk-type">
+                    <option value="S">String (S)</option>
+                    <option value="N">Number (N)</option>
+                  </select>
+                </div>
+                <button class="btn btn-primary" type="submit">Create Table</button>
+              </form>
+              <div id="ddb-tables-list" class="list-group"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><h2 id="ddb-selected-table-title">Select a table</h2></div>
+            <div class="card-body" id="ddb-table-empty">
+              <p class="muted">Select or create a DynamoDB table to scan and edit items.</p>
+            </div>
+            <div class="card-body hidden" id="ddb-table-detail">
+              <div id="ddb-table-meta" class="meta-line"></div>
+              <form id="ddb-put-item-form" class="stack-form">
+                <textarea id="ddb-item-json" rows="5" class="code-input"></textarea>
+                <button class="btn btn-primary" type="submit">PutItem</button>
+              </form>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Item (DynamoDB JSON)</th><th>Actions</th></tr></thead>
+                  <tbody id="ddb-items-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- EC2 -->
+      <section id="view-ec2" class="view">
+        <div class="page-header">
+          <h1>EC2 Instances</h1>
+          <p class="subtitle">Launch and control emulated EC2 instances (control-plane state transitions).</p>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2>Launch Instance</h2></div>
+          <div class="card-body">
+            <form id="ec2-run-form" class="inline-form wrap">
+              <input id="ec2-name" type="text" placeholder="Name tag (e.g. web-1)" />
+              <input id="ec2-type" type="text" value="t3.micro" placeholder="InstanceType" />
+              <input id="ec2-ami" type="text" value="resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64" placeholder="AMI ID or resolve:ssm:..." class="wide-input" />
+              <button class="btn btn-primary" type="submit">RunInstances</button>
+            </form>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2>Instances</h2></div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Instance ID</th>
+                    <th>Name</th>
+                    <th>State</th>
+                    <th>Type</th>
+                    <th>Private IP</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="ec2-instances-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- API PLAYGROUND -->
+      <section id="view-playground" class="view">
+        <div class="page-header">
+          <h1>API Playground</h1>
+          <p class="subtitle">Send arbitrary signed or unsigned AWS API requests to verify responses directly.</p>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header row-between">
+              <h2>Request</h2>
+              <select id="pg-preset">
+                <option value="">Load preset…</option>
+                <option value="sts-whoami">STS GetCallerIdentity</option>
+                <option value="s3-list">S3 ListBuckets</option>
+                <option value="s3-public">S3 Unsigned GET /demo-public-bucket/hello.txt</option>
+                <option value="iam-users">IAM ListUsers</option>
+                <option value="ddb-tables">DynamoDB ListTables</option>
+                <option value="sqs-queues">SQS ListQueues</option>
+                <option value="sm-list">Secrets Manager ListSecrets</option>
+              </select>
+            </div>
+            <div class="card-body">
+              <form id="pg-form" class="stack-form">
+                <div class="form-row">
+                  <label class="field">
+                    <span>Protocol</span>
+                    <select id="pg-mode">
+                      <option value="rest">REST / S3</option>
+                      <option value="query">Query (IAM / STS / EC2 / SQS)</option>
+                      <option value="json">JSON Target (DynamoDB / SecretsManager)</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Signing Service</span>
+                    <input id="pg-service" type="text" value="s3" required />
+                  </label>
+                  <label class="field">
+                    <span>Caller Override</span>
+                    <select id="pg-caller">
+                      <option value="">(Use Active Caller)</option>
+                      <option value="root">root</option>
+                      <option value="anonymous">anonymous (unsigned)</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div id="pg-rest-fields" class="stack-form">
+                  <div class="form-row">
+                    <select id="pg-method">
+                      <option>GET</option>
+                      <option>PUT</option>
+                      <option>POST</option>
+                      <option>DELETE</option>
+                      <option>HEAD</option>
+                    </select>
+                    <input id="pg-path" type="text" value="/" placeholder="/bucket/key" />
+                  </div>
+                  <input id="pg-query" type="text" placeholder="Query params JSON (optional), e.g. {&quot;list-type&quot;:&quot;2&quot;}" />
+                </div>
+
+                <div id="pg-query-fields" class="stack-form hidden">
+                  <div class="form-row">
+                    <input id="pg-version" type="text" value="2011-06-15" placeholder="Version (e.g. 2010-05-08)" />
+                    <input id="pg-action" type="text" value="GetCallerIdentity" placeholder="Action" />
+                  </div>
+                  <input id="pg-extra-params" type="text" placeholder="Extra params JSON (optional), e.g. {&quot;MaxItems&quot;:&quot;10&quot;}" />
+                </div>
+
+                <div id="pg-json-fields" class="stack-form hidden">
+                  <div class="form-row">
+                    <input id="pg-target" type="text" value="DynamoDB_20120810.ListTables" placeholder="X-Amz-Target" />
+                    <input id="pg-content-type" type="text" value="application/x-amz-json-1.0" placeholder="Content-Type" />
+                  </div>
+                </div>
+
+                <label class="field">
+                  <span>Request Body</span>
+                  <textarea id="pg-body" rows="6" class="code-input" placeholder="Optional body or JSON payload…"></textarea>
+                </label>
+
+                <button class="btn btn-primary" type="submit">Send Request</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header row-between">
+              <h2>Response</h2>
+              <span id="pg-status-badge" class="pill pill-muted">Idle</span>
+            </div>
+            <div class="card-body">
+              <div id="pg-meta" class="meta-line">Send a request to inspect status, headers, and raw output.</div>
+              <pre id="pg-resp-headers" class="code-block small-block hidden"></pre>
+              <pre id="pg-resp-body" class="code-block"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- LIVE API INSPECTOR DRAWER -->
+  <section id="inspector-drawer" class="inspector hidden">
+    <div class="inspector-header">
+      <div class="row-gap">
+        <strong>Live API Call Inspector</strong>
+        <span class="muted small">Every request sent from AEC to AWS Emulator</span>
+      </div>
+      <div class="btn-group">
+        <button id="inspector-clear-btn" class="btn btn-dark btn-sm">Clear</button>
+        <button id="inspector-close-btn" class="btn btn-dark btn-sm">Close</button>
+      </div>
+    </div>
+    <div class="inspector-body">
+      <div class="inspector-list" id="inspector-list"></div>
+      <div class="inspector-detail" id="inspector-detail">
+        <div class="muted">Click any API call on the left to inspect its headers and response payload.</div>
+      </div>
+    </div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>
